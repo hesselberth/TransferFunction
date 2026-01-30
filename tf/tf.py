@@ -94,8 +94,8 @@ class TransferFunction:
         ----------
         *args : Pass either nothing for a unity transfer function, a tuple
                 (num, den) containing the numerator and denominator,
-                num, den as a numerator and denominator,
-                num, den, Ts. Ts is a sampling time of a discrete time system.
+                num, den as a numerator and denominator or num, den, Ts.
+                Ts is the sampling time of a discrete time system.
                 num and den may be sequences of coefficients of polynomials
                 (0th order first) or np.Polynomial's.
         **kwargs : -
