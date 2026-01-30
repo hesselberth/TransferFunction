@@ -51,7 +51,7 @@ def btmatrix(N, Ts=2):
 
 def bt(num, den, Ts):
     """
-    Bilinear transform of a transfer function at sample time Ts.
+    Bilinear transform of a transfer function for sample time Ts.
 
     Parameters
     ----------
@@ -84,7 +84,7 @@ def bt(num, den, Ts):
     return B, A
 
 
- # A generic transfer function class.
+ # Generic transfer function class.
 class TransferFunction:
     def __init__(self, *args, **kwargs):
         """
