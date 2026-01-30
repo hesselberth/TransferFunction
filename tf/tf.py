@@ -41,11 +41,11 @@ def btmatrix(N, Ts=2):
     M = np.zeros([N+1,N+1])
     for i in range(N+1):
         for j in range(N+1):
-            acc = 0;
+            s = 0
             for k in range(max(i+j-N, 0), min(i, j)+1):
-                acc += ( ( f(j)*f(N-j) ) /
+                s += ( ( f(j)*f(N-j) ) /
                         ( f(k)*f(j-k)*f(i-k)*f(N-j-i+k) ) ) * pow(-1, k)
-            M[j][N-i] = acc *pow(2/Ts, j)
+            M[j][N-i] = s * pow(2/Ts, j)
     return M
 
 
