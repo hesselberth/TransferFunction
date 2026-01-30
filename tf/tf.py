@@ -84,7 +84,7 @@ def bt(num, den, Ts):
     return B, A
 
 
- # Generic transfer function class.
+# Generic transfer function class.
 class TransferFunction:
     def __init__(self, *args, **kwargs):
         """
