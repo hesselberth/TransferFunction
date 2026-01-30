@@ -33,10 +33,10 @@ def btmatrix(N, Ts=2):
     Returns
     -------
     M : The bilinear transform matrix M
-        For a vector A of polynomial coefficients A.dot(M) is 
-        the bilinear transform. N is the order of the polynomial. len(A) == N+1.
+        For a vector A of polynomial coefficients A @ M is 
+        the bilinear transform. N is the order of the polynomial.
+        len(A) == N+1.
         The coefficients in M are arranged such that A[0] is order 0.
-
     """
     M = np.zeros([N+1,N+1])
     for i in range(N+1):
@@ -78,8 +78,8 @@ def bt(num, den, Ts):
     a = np.pad(den, (0, orderplus1 - la))
     b = np.pad(num, (0, orderplus1 - lb))
     M = btmatrix(order, Ts)
-    A = a.dot(M)
-    B = b.dot(M) / A[0]
+    A = a @ M
+    B = b @ M / A[0]
     A /= A[0]
     return B, A
 
