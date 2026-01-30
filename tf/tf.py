@@ -4,6 +4,8 @@
 Created on Sun Nov 30 20:31:33 2025
 
 @author: Marcel Hesselberth
+
+Version: 0.2
 """
 
 import numpy as np
@@ -474,7 +476,6 @@ class TransferFunction:
         y = self.tdfilter(x)
         return t, y
 
-    # TODO
     def step_response(self, fs=None, N=None):
         """
         The step response, calculated through convolution 
