@@ -238,12 +238,17 @@ class TransferFunction:
         TransferFunction
                 The quotient.
         """
-        if type(other) in [int, float]:
-            other *= TransferFunction()
-        print(other, type(other))
+        if isinstance(other, (int, float)):
+            return TransferFunction(self.num, self.den * other)
         if isinstance(other, TransferFunction):
-            return TransferFunction(self.num*other.den, self.den*other.num)
- 
+            return TransferFunction(self.num * other.den, self.den * other.num)
+        raise NotImplementedError()
+
+    def __rtruediv__(self, other):
+        if isinstance(other, (int, float)):
+            return TransferFunction(other * self.den, self.num)
+        raise NotImplementedError()
+
     def __neg__(self): return TransferFunction(-self.num, self.den)
 
     def __call__(self, s):
@@ -298,6 +303,25 @@ class TransferFunction:
         self.T = Ts
         b, a = bt(self.num.coef, self.den.coef, Ts)
         return TransferFunction(b, a, Ts)
+
+    def delay(self, n_samples, tol=1e-12):
+        """
+        Sample delay.
+        """
+
+        if not hasattr(self, 'Ts') or self.Ts <= 0:
+            raise ValueError("delay() can only be applied to discrete-time \
+                             transfer functions")
+        if not isinstance(n_samples, int) or n_samples < 0:
+            raise ValueError("n_samples must be a non-negative integer")
+
+        if n_samples == 0:
+            return TransferFunction(self.num, self.den, Ts=self.Ts)
+
+        # z^{-k} = 1 / z^k  → multiply denominator by z^k
+        delay_den = Polynomial([0]*k_samples + [1.0])  # coefficients: [0, 0, ..., 1] for z^k
+        new_den = self.den * delay_den
+        return TransferFunction(self.num, new_den, Ts=self.Ts)
 
     def pzk(self):
         """
@@ -422,17 +446,18 @@ class TransferFunction:
                 y[n] -= self.a[la1-i] * y[n-i]
         return y
 
-    def ira(self, Ts, n):
+    def impulse_respomse(self, Ts, n):
         """
-        The impulse response of the continous time transfer function,
-        calculated through the inverse fft of the frequency response.
-
+        Calculate the impulse response of the transfer function.
+        - Discrete case: uses the difference equation.
+        - Continuous case: uses impulse response + convolution
+        
         Parameters
         ----------
         Ts : Float
              The time domain interval for which samples will be calculated.
         n :  Int
-             The number of samples.
+             The number of samples
 
         Returns
         -------
@@ -442,64 +467,53 @@ class TransferFunction:
              Impulse response of the transfer function.
         """
         t = np.linspace(0, (n-1)*Ts, n)
-        f = np.fft.rfftfreq(n, Ts)
-        H = self
-        w = PI2 * f
-        s = 1j * w
-        ha = H(s)
-        ir = np.fft.irfft(ha)
-        re = np.real(ir)
-        return t, re
+        if hasattr(self, 'Ts') and self.Ts > 0:
+            # Discrete
+            f = np.fft.rfftfreq(n, Ts)
+            w = PI2 * f
+            s = 1j * w
+            ha = self(s)
+            ir = np.fft.irfft(ha)
+            return t, np.real(ir)
+        else:
+            # Contuinuous
+            x = np.zeros(len(t))
+            x[0] = 1  # Impulse
+            y = self.tdfilter(x)
+            return t, y
 
-    def ird(self, Ts, n):
+    def step_response(self, Ts, n):
         """
-        The impulse response of the discrete time transfer function,
-        calculated through the finite difference equation.
+        Calculate the step response of the transfer function.
+        - Discrete case: uses the difference equation.
+        - Continuous case: uses impulse response + convolution
 
         Parameters
         ----------
         Ts : Float
-             The time domain interval for which samples will be calculated.
+             The time domain interval for which samples will be calculated
         n :  Int
-             The number of samples.
+             The number of samples
 
         Returns
         -------
         t :  n.array(float)
-             Sample times
+             Sample times.
         y : np.array(float)
-             Impulse response of the discrete time transfer function.
+             Step response of the transfer function.
         """
-        t = np.linspace(0, (n-1)*Ts, n)
-        x = np.zeros(len(t))
-        x[0] = 1  # Impulse
-        y = self.tdfilter(x)
-        return t, y
-
-    def step_response(self, fs=None, N=None):
-        """
-        The step response, calculated through convolution 
-
-        Parameters
-        ----------
-        fs : TYPE, optional
-            DESCRIPTION. The default is None.
-        N : TYPE, optional
-            DESCRIPTION. The default is None.
-
-        Returns
-        -------
-        t : TYPE
-            DESCRIPTION.
-        y : TYPE
-            DESCRIPTION.
-
-        """
-
-        t, h = self.impulse_response(T_total=T_total, fs=fs, N=N)
-        step = np.ones_like(t)
-        y = np.convolve(h, step, mode='full')[:len(t)]
-        return t, y
+        if hasattr(self, 'Ts') and self.Ts > 0:
+            # Discrete
+            t = np.linspace(0, (n-1)*Ts, n)
+            u = np.ones(n)
+            y = self.tdfilter(u)
+            return t, y
+        else:
+            # Continuous approximation
+            t, h = self.impulse_response(Ts, n)
+            step_input = np.ones_like(t)
+            y = np.convolve(h, step_input, mode='full')
+            return t, y
 
     def poles(self):
         """
