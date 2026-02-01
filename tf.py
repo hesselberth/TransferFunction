@@ -1,78 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sun Nov 30 20:31:33 2025
+Created on Sun Feb  1 11:58:05 2026
 
 @author: Marcel Hesselberth
 
-Version: 0.2
+Version 0.3a
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Transfer Function library for control system modeling and simulation
+Supports bilinear (Tustin) discretization and export to CMSIS-DSP style biquads
 """
 
 import numpy as np
 from numpy.polynomial import Polynomial
-from info import Info
-from functools import cache
 from math import factorial as f
+from functools import cache
 
 DEFAULTTRIM = 1e-12
-info = Info()
 PI = np.pi
 PI2 = 2 * PI
+
 
 @cache
 def btmatrix(N, Ts=2):
     """
-    Generate a matrix for the bilinear transform of general order.
-    Uses the binomial theorem to compute the coefficients.
-
-    Parameters
-    ----------
-    N  : Integer
-         Order N is the highest polynomial order in the transfer function.
-    Ts : Float, optional
-         Sampling time. The default is 2, corresponding to K = 2 / 2 = 1.
-
-    Returns
-    -------
-    M : The bilinear transform matrix M
-        For a vector A of polynomial coefficients A @ M is 
-        the bilinear transform. N is the order of the polynomial.
-        len(A) == N+1.
-        The coefficients in M are arranged such that A[0] is order 0.
+    Bilinear transform matrix using binomial theorem.
+    Coefficients arranged low-to-high (A[0] = constant term).
     """
-    M = np.zeros([N+1,N+1])
+    M = np.zeros((N+1, N+1))
     for i in range(N+1):
         for j in range(N+1):
-            s = 0
-            for k in range(max(i+j-N, 0), min(i, j)+1):
-                s += ( ( f(j)*f(N-j) ) /
-                        ( f(k)*f(j-k)*f(i-k)*f(N-j-i+k) ) ) * pow(-1, k)
-            M[j][N-i] = s * pow(2/Ts, j)
+            s = 0.0
+            for k in range(max(i + j - N, 0), min(i, j) + 1):
+                num = f(j) * f(N - j)
+                den = f(k) * f(j - k) * f(i - k) * f(N - j - i + k)
+                s += (num / den) * ((-1) ** k)
+            M[j, N-i] = s * (2 / Ts) ** j
     return M
 
 
 def bt(num, den, Ts):
-    """
-    Bilinear transform of a transfer function for sample time Ts.
-
-    Parameters
-    ----------
-    num : np.array of polynomial coefficients
-          The numerator polynomial of the transfer function.
-    den : np.array
-          The denominator polynomial of the transfer function.
-    Ts  : Float  
-          The sample interval.
-
-    Returns
-    -------
-    A : np.array
-        The coefficients of the numerator polynomial.
-    B : np.array
-        The coefficients of the denominator polynomial.
-        
-    A and B both have length max(len(num), len(den))  
-    """
+    """Apply bilinear transform using precomputed matrix."""
     la = len(den)
     lb = len(num)
     orderplus1 = max(la, lb)
@@ -81,483 +53,335 @@ def bt(num, den, Ts):
     b = np.pad(num, (0, orderplus1 - lb))
     M = btmatrix(order, Ts)
     A = a @ M
-    B = b @ M / A[-1]
-    A /= A[-1]
+    B = b @ M
+    norm = A[-1]
+    if abs(norm) < 1e-20:
+        raise ValueError("Denominator became zero after bilinear transform")
+    #A = A / norm
+    #B = B / norm
+
+    A = A[::-1] / norm
+    B = B[::-1] / norm
+    print("bt: B", B)
+    print("bt: A", A)
     return B, A
 
-# Generic transfer function class.
+
 class TransferFunction:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, Ts=0.0, trim_tol=DEFAULTTRIM, **kwargs):
         """
         Transfer Function constructor.
 
         Parameters
         ----------
-        *args : Pass either nothing for a unity transfer function, a tuple
-                (num, den) containing the numerator and denominator,
-                num, den as a numerator and denominator or num, den, Ts.
-                Ts is the sampling time of a discrete time system.
-                num and den may be sequences of coefficients of polynomials
-                (0th order first) or np.Polynomial's.
-        **kwargs : -
-                not currently used.
-
-        Returns
-        -------
-        None.
-
+        *args : 0, 1 or 2 positional arguments
+                - 0 args: unity gain TF (1/1)
+                - 1 arg: copy another TransferFunction
+                - 2 args: num, den (coefficients or Polynomial)
+        Ts : float, optional (keyword)
+             Sampling time ( > 0 for discrete, 0 for continuous)
+        trim_tol : float, optional (keyword)
+             Tolerance for trimming small leading coefficients
         """
-        if "trim_tol" in kwargs:
-            trim_tol = kwargs["trim_tol"]
-        else:
-            trim_tol = DEFAULTTRIM
-        if args == ():
-            self.num = Polynomial([1])
-            self.den = Polynomial([1])
+        self.Ts = float(Ts)
+
+        # Handle trim_tol from kwargs or default
+        trim_tol = kwargs.get("trim_tol", trim_tol)
+
+        if len(args) == 0:
+            self.num = Polynomial([1.0])
+            self.den = Polynomial([1.0])
         elif len(args) == 1:
-            tf = args[0]
-            num = tf.num
-            den = tf.den
-            self.fromnd(num, den)
-        elif len(args) in [2,3]:
-            self.fromnd(args[0], args[1])
-            if len(args) == 3:
-                self.Ts = args[2]
-            else:
-                self.Ts = 0
+            other = args[0]
+            if not isinstance(other, TransferFunction):
+                raise TypeError("Single positional argument must be a TransferFunction")
+            self.num = other.num
+            self.den = other.den
+            self.Ts = getattr(other, 'Ts', 0.0)
+        elif len(args) == 2:
+            self.fromnd(args[0], args[1], trim_tol=trim_tol)
         else:
-            info.error("Transferfunction constructor requires 0 or 2 arguments.")
+            raise ValueError("TransferFunction accepts 0, 1 (copy) or 2 \
+                             positional arguments + Ts= keyword")
 
     def fromnd(self, n, d, trim_tol=DEFAULTTRIM):
-        """
-        Helper to initialize a TransferFunction.
-        Called by the constructor.
-
-        Parameters
-        ----------
-        n : sequence or np.Polynomial
-            numerator
-        d : sequence or np.Polynomial
-            denominator
-        trim_tol : Float, optional
-            Ignore small coefficients (due to prior numerical error).
-            The default is DEFAULTTRIM.
-
-        Returns
-        -------
-        None.
-
-        """
         self.num = Polynomial(n) if not isinstance(n, Polynomial) else n
         self.den = Polynomial(d) if not isinstance(d, Polynomial) else d
-        if len(self.num) < 1 or len(self.den) < 1:
-            info.error("b and a must be non-empty coefficient lists")
+        if len(self.num) == 0 or len(self.den) == 0:
+            raise ValueError("numerator and denominator must be non-empty")
         self._trim(trim_tol)
 
-    def _trim(self, tol=1e-12):
-        """
-        Remove negligibe coefficients.
-
-        Parameters
-        ----------
-        tol : Float, optional
-              Numerical tolerance. The default is 1e-12.
-
-        Returns
-        -------
-        None.
-
-        """
+    def _trim(self, tol):
         def trim_poly(p):
-            coeffs = p.coef.copy()
-            while len(coeffs) > 1 and np.abs(coeffs[-1]) < tol:
-                coeffs = coeffs[:-1]
-            return Polynomial(coeffs)
+            c = p.coef.copy()
+            while len(c) > 1 and abs(c[-1]) < tol:
+                c = c[:-1]
+            return Polynomial(c)
         self.num = trim_poly(self.num)
         self.den = trim_poly(self.den)
 
+    def _acheck(self, Ts1, Ts2):
+        """
+        Check Ts alignment for TF arithmetic.
+        """
+        if not Ts1 == Ts2:
+            if 0 in [Ts1, Ts2]:
+                raise ValueError("mixed continuous / discrete")
+            else:
+                raise ValueError("different sampling times")
+
     def __add__(self, other):
-        """
-        Add 2 transfer functions.
-
-        Parameters
-        ----------
-        other : TransferFunction or a number
-                The transfer function to be added.
-
-        Returns
-        -------
-        TransferFunction
-                The sum.
-        """
-        if type(other) in [int, float]:
-            return TransferFunction(other * 
-                self.den.coef[0] + self.num, self.den)
-        if isinstance(other, TransferFunction):
-            return TransferFunction(self.num*other.den + 
-                other.num*self.den, self.den*other.den)
-
-    def __radd__(self, other): return self + other
-    
-    def __sub__(self, other): return self + (-other)
-    
-    def __mul__(self, other):
-        """
-        Multiply 2 transfer functions.
-
-        Parameters
-        ----------
-        other : TransferFunction or a number
-                The multiplier.
-
-        Returns
-        -------
-        TransferFunction
-                The product.
-        """
-        if type(other) in [int, float]:
-            return TransferFunction(other * self.num, self.den)
-        if isinstance(other, TransferFunction):
-            return TransferFunction(self.num*other.num, self.den*other.den)
-
-    def __rmul__(self, other): return self * other
-    
-    def __truediv__(self, other):
-        """
-        Divide a transfer function.
-
-        Parameters
-        ----------
-        other : TransferFunction or a number 
-                The denominator.
-
-        Returns
-        -------
-        TransferFunction
-                The quotient.
-        """
         if isinstance(other, (int, float)):
-            return TransferFunction(self.num, self.den * other)
+            return TransferFunction(other * self.den + self.num, self.den, Ts = self.Ts)
         if isinstance(other, TransferFunction):
-            return TransferFunction(self.num * other.den, self.den * other.num)
+            self._acheck(self.Ts, other.Ts)
+            return TransferFunction(self.num * other.den + other.num * self.den,
+                                   self.den * other.den, Ts = self.Ts)
+        return NotImplemented
+
+    __radd__ = __add__
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return TransferFunction(other * self.num, self.den, Ts = self.Ts)
+        if isinstance(other, TransferFunction):
+            self._acheck(self.Ts, other.Ts)
+            return TransferFunction(self.num * other.num, self.den * other.den, Ts = self.Ts)
+        return NotImplemented
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, other):
+        if isinstance(other, (int, float)):
+            return TransferFunction(self.num, self.den * other, Ts = self.Ts)
+        if isinstance(other, TransferFunction):
+            self._acheck(self.Ts, other.Ts)
+            return TransferFunction(self.num * other.den, self.den * other.num, Ts = self.Ts)
         raise NotImplementedError()
 
     def __rtruediv__(self, other):
         if isinstance(other, (int, float)):
-            return TransferFunction(other * self.den, self.num)
+            return TransferFunction(other * self.den, self.num, Ts = self.Ts)
         raise NotImplementedError()
 
-    def __neg__(self): return TransferFunction(-self.num, self.den)
+    def __neg__(self):
+        return TransferFunction(-self.num, self.den, Ts = self.Ts)
 
     def __call__(self, s):
-        """
-        Evaluate the transfer function for complex frequency s.
-
-        Parameters
-        ----------
-        s : Complex or np.array(complex).
-            Complex frequency
-
-        Returns
-        -------
-        Complex or np.array(complex)
-            The value(s) of the transfer function.
-        """
         s = np.atleast_1d(s)
         return self.num(s) / self.den(s)
 
     def bilinear_transform(self, fs=None, Ts=None, prewarp_freq=None):
-        """
-        Transform the s domain transfer function to the z domain.
-
-        Parameters
-        ----------
-        fs : Float, optional
-             Sampling frequency. The default is None.
-        Ts : Float, optional
-             Sampling time. The default is None.
-        prewarp_freq : Float, optional
-             Prewarp frequency. The default is None.
-
-        Raises
-        ------
-        ValueError
-            The bilinear transform can only be carried out if the sampling
-            time can be determined by passing Ts or fs.
-
-        Returns
-        -------
-        TransferFunction
-            The discrete time transfer function in the z domain.
-            This transfer function has a Ts value set.
-        """
         if fs is None and Ts is None:
-            raise ValueError("Must specify fs or Ts")
-        Ts = Ts or 1.0/fs
-        if Ts <= 0:
-            info.error("bt: T must be > 0")
+            raise ValueError("Must provide either fs or Ts")
+        Ts_val = Ts if Ts is not None else 1.0 / fs
+        if Ts_val <= 0:
+            raise ValueError("Sampling time must be > 0")
+
         if prewarp_freq is not None:
-            w = PI2*prewarp_freq
-            Ts = (2/w) * np.tan(w*Ts/2)
-        b, a = bt(self.num.coef, self.den.coef, Ts)
-        discrete = TransferFunction(b, a, Ts)
-        return discrete
+            w = PI2 * prewarp_freq
+            Ts_val = (2 / w) * np.tan(w * Ts_val / 2)
 
-    def delay(self, n_samples, tol=1e-12):
-        """
-        Sample delay.
-        """
+        b, a = bt(self.num.coef, self.den.coef, Ts_val)
+        return TransferFunction(b, a, Ts=Ts_val)
 
+
+    # TODO check sign for higher order systems
+    def to_difference_equation(self, high_to_low=True):
+        """
+        Returns b (feedforward), a (feedback) coefficients.
+        - high_to_low=True  → DSP standard: highest power first, a[0] ≈ 1
+        - high_to_low=False → internal low-to-high order
+        """
+        lc = self.den.coef[0]
+        if abs(lc) < 1e-20:
+            raise ValueError("Denominator leading coefficient near zero")
+
+        num_n = self.num.coef / lc
+        den_n = self.den.coef / lc
+
+        if high_to_low:
+            return num_n[::-1], den_n[::-1]
+        else:
+            return num_n, den_n
+
+    def export_cmsis_biquad_df2t(self, var_name="coeffs", instance_name="S", state_name="state"):
+        """
+        Print C code snippet for arm_biquad_cascade_df2T_f32 (DF-II Transposed).
+        Coefficients: b0, b1, b2, -a1, -a2, ... (CMSIS convention)
+        """
         if not hasattr(self, 'Ts') or self.Ts <= 0:
-            raise ValueError("delay() can only be applied to discrete-time \
-                             transfer functions")
-        if not isinstance(n_samples, int) or n_samples < 0:
-            raise ValueError("n_samples must be a non-negative integer")
+            raise ValueError("export_cmsis_biquad_df2t requires discrete TF (Ts > 0)")
 
-        if n_samples == 0:
-            return TransferFunction(self.num, self.den, Ts=self.Ts)
+        b_high, a_high = self.to_difference_equation(high_to_low=True)
 
-        # z^{-k} = 1 / z^k  → multiply denominator by z^k
-        delay_den = Polynomial([0]*n_samples + [1.0])  # coefficients: [0, 0, ..., 1] for z^k
-        new_den = self.den * delay_den
-        return TransferFunction(self.num, new_den, Ts=self.Ts)
+        poles = self.poles()
+        zeros = self.zeros()
+        gain = float(self(0.0)) if len(zeros) == 0 else self.num(1.0) / self.den(1.0)
 
-    def pzk(self):
-        """
-        The poles, zeros and gain of the transfer function.
+        def roots_to_quadratics(roots):
+            roots = sorted(roots, key=lambda r: (abs(r), np.angle(r)))
+            quads = []
+            i = 0
+            while i < len(roots):
+                if (i + 1 < len(roots) and
+                        np.isclose(roots[i].real, roots[i+1].real) and
+                        np.isclose(roots[i].imag, -roots[i+1].imag, atol=1e-6)):
+                    p = Polynomial.fromroots([roots[i], roots[i+1]])
+                    quads.append(p.coef[::-1])          # high-to-low
+                    i += 2
+                else:
+                    p = Polynomial.fromroots([roots[i]])
+                    coef = p.coef[::-1]
+                    coef = np.pad(coef, (0, 3 - len(coef)), constant_values=0.0)
+                    quads.append(coef)
+                    i += 1
+            return quads
 
-        Returns
-        -------
-        p : List
-            List of poles
-        z : List
-            List of zeros
-        k : Float
-            Gain.
+        pole_quads = roots_to_quadratics(poles)
+        zero_quads = roots_to_quadratics(zeros)
 
-        """
-        k = self(0)
-        p = self.den.roots()
-        z = self.num.roots()
-        return p, z, k
+        n = max(len(pole_quads), len(zero_quads))
+        while len(pole_quads) < n:
+            pole_quads.append(np.array([1.0, 0.0, 0.0]))
+        while len(zero_quads) < n:
+            zero_quads.append(np.array([1.0, 0.0, 0.0]))
 
-    def pzinfo(self):
-        """
-        Pole and zero information for pretty printing and decorating purposes.
+        sections = []
+        g = gain ** (1.0 / max(1, n)) if n > 0 else gain
 
-        Returns
-        -------
-        result : A list of tuples (Float, Char)
-                Each tuple (f, symbol) contains the frequency in Hz and:
-                    - a  '+' for a pole
-                    - an 'x' for a complex conjugate pole pair
-                    - a  'o' for a zero
-        """
-        poles, zeros, k = self.pzk()
-        #print(poles, zeros)
-        result = []
-        for pole in poles:
-            i = np.imag(pole)
-            if abs(i) < 0.001:
-                p = np.real(pole)
-                result.append((abs(p/PI2), "+"))
-            else:
-                p = np.imag(pole)
-                if p > 0:
-                    result.append((abs(p/PI2), "x"))
-        for zero in zeros:
-            i = np.imag(zero)
-            if abs(i) < 0.001:
-                z = np.real(zero)
-            else:
-                z = i
-            result.append((abs(z/PI2), "o"))                
-        return result
+        for zq, pq in zip(zero_quads, pole_quads):
+            b_sec = g * zq
+            a_sec = pq
+            b_sec = np.pad(b_sec, (3 - len(b_sec), 0), constant_values=0.0)
+            a_sec = np.pad(a_sec, (3 - len(a_sec), 0), constant_values=0.0)
+            sec = [b_sec[0], b_sec[1], b_sec[2], -a_sec[1], -a_sec[2]]
+            sections.extend(sec)
+
+        print(f"// Generated for {self!r}  (order {len(a_high)-1})")
+        print(f"// {n} biquad stage(s)")
+        print(f"float32_t {var_name}[] = {{")
+        print("    " + ",\n    ".join(f"{x:12.8e}f" for x in sections))
+        print("};")
+        print("")
+        print(f"float32_t {state_name}[{2 * n}] = {{0.0f}};")
+        print(f"arm_biquad_cascade_df2T_instance_f32 {instance_name};")
+        print(f"arm_biquad_cascade_df2T_init_f32(&{instance_name}, {n}, {var_name}, {state_name});")
+        print("// Usage: y = arm_biquad_cascade_df2T_f32(&S, &x_in, 1);")
+
+    # ──────────────────────────────────────────────── Time-domain simulation (DF-I)
 
     def tdfilter(self, x):
-        """
-        Calculate the output y[i] of the discrete finite difference equation
-        for input vector x.
-
-        Parameters
-        ----------
-        x :  np.array(float)
-             Input values.
-        y0 : Float, optional
-             y[0]. The default is 0. Higher order boundary conditions are
-             assumed to be 0.
-
-        Returns
-        -------
-        y : np.array(float)
-            The discrete time domain output y.
-            The length of y is identical to the length of x.
-        """
-        try:
-            Ts = self.Ts
-        except:
-            info.error("Sampling time not known. Set Ts first.")
-
-        a, b = self.den.coef, self.num.coef
+        if not hasattr(self, 'Ts') or self.Ts <= 0:
+            raise ValueError("requires discrete-time transfer function")
+        a = self.den.coef[::-1]
+        b = self.num.coef[::-1]
         lx = len(x)
-        la = len(a)
-        lb = len(b)
-        la1 = la - 1
-        lb1 = lb - 1
-        x = np.pad(x, (0, lb))  # add some zeros for negative indices
+        la, lb = len(a), len(b)
+        xpad = np.pad(x.astype(float), (0, lb))
         y = np.zeros(lx)
-
         for n in range(lx):
             for i in range(lb):
-                y[n] += b[lb1-i] * x[n-i]
+                y[n] += b[lb - 1 - i] * xpad[n - i]
             for i in range(1, la):
-                y[n] -= a[la1-i] * y[n-i]
+                y[n] -= a[la - 1 - i] * y[n - i]
         return y
 
     def impulse_response(self, Ts, n):
-        """
-        Calculate the impulse response of the transfer function.
-        - Discrete case: uses the difference equation.
-        - Continuous case: uses impulse response + convolution
-        
-        Parameters
-        ----------
-        Ts : Float
-             The time domain interval for which samples will be calculated.
-        n :  Int
-             The number of samples
-
-        Returns
-        -------
-        t :  n.array(float)
-             Sample times
-        re : np.array(float)
-             Impulse response of the transfer function.
-        """
         t = np.linspace(0, (n-1)*Ts, n)
         if hasattr(self, 'Ts') and self.Ts > 0:
-            # Discrete
-            x = np.zeros(len(t))
-            x[0] = 1  # Impulse
+            x = np.zeros(n)
+            x[0] = 1.0
             y = self.tdfilter(x)
             return t, y
         else:
-            # Continuous
             f = np.fft.rfftfreq(n, Ts)
             w = PI2 * f
-            s = 1j * w
-            ha = self(s)
+            ha = self(1j * w)
             ir = np.fft.irfft(ha)
             return t, np.real(ir)
 
     def step_response(self, Ts, n):
-        """
-        Calculate the step response of the transfer function.
-        - Discrete case: uses the difference equation.
-        - Continuous case: uses impulse response + convolution
-
-        Parameters
-        ----------
-        Ts : Float
-             The time domain interval for which samples will be calculated
-        n :  Int
-             The number of samples
-
-        Returns
-        -------
-        t :  n.array(float)
-             Sample times.
-        y : np.array(float)
-             Step response of the transfer function.
-        """
+        t = np.linspace(0, (n-1)*Ts, n)
         if hasattr(self, 'Ts') and self.Ts > 0:
-            # Discrete
-            t = np.linspace(0, (n-1)*Ts, n)
             u = np.ones(n)
             y = self.tdfilter(u)
             return t, y
         else:
-            # Continuous approximation
-            t, h = self.impulse_response(Ts, n)
-            step_input = np.ones_like(t)
-            y = np.convolve(h, step_input, mode='full')
-            return t, y
+            tt, h = self.impulse_response(Ts, n)
+            y = np.convolve(h, np.ones_like(tt), mode='full')[:n]
+            return tt, y
+
+    # ──────────────────────────────────────────────── Utility
+
+    def delay(self, n_samples, tol=1e-12):
+        if not hasattr(self, 'Ts') or self.Ts <= 0:
+            raise ValueError("delay requires discrete TF")
+        if not isinstance(n_samples, int) or n_samples < 0:
+            raise ValueError("n_samples must be non-negative integer")
+        if n_samples == 0:
+            return self
+        delay_den = Polynomial([0.0] * n_samples + [1.0])
+        return TransferFunction(self.num, self.den * delay_den, Ts=self.Ts)
 
     def poles(self):
-        """
-        The poles of the transfer function, calculated from the roots of
-        the denominator.
-
-        Returns
-        -------
-        np.ndarray
-            Array of poles.
-        """
         return self.den.roots()
 
     def zeros(self):
-        """
-        The zeros of the transfer function, calculated from the roots of
-        the numerator.
-
-        Returns
-        -------
-        np.ndarray
-            Array of zeros.
-        """
         return self.num.roots()
 
+    def pzk(self):
+        return self.poles(), self.zeros(), self(0.0)
+
+    def pzinfo(self):
+        """
+        Pole-zero location info for plotting / decoration.
+        Returns list of (frequency_in_Hz, symbol) tuples:
+          '+'  : stable real pole
+          'x'  : complex conjugate pole pair
+          'o'  : zero
+        Frequency is always positive.
+        """
+        poles, zeros, _ = self.pzk()
+        result = []
+        processed = set()
+
+        for p in poles:
+            if id(p) in processed:
+                continue
+            imag = np.imag(p)
+            if abs(imag) < 1e-4:
+                freq = -np.real(p) / PI2
+                if freq > 0:
+                    result.append((freq, '+'))
+            else:
+                freq = abs(imag) / PI2
+                result.append((freq, 'x'))
+                conj = np.conj(p)
+                for other in poles:
+                    if np.isclose(other, conj, atol=1e-6):
+                        processed.add(id(other))
+                        break
+
+        for z in zeros:
+            imag = np.imag(z)
+            freq = abs(np.real(z) if abs(imag) < 1e-4 else imag) / PI2
+            if freq > 0:
+                result.append((freq, 'o'))
+
+        result.sort(key=lambda x: x[0])
+        return result
+
     def __repr__(self):
-        return f"TransferFunction(num={self.num}, den={self.den})"
+        ts_str = f", Ts={self.Ts}" if self.Ts > 0 else ""
+        return f"TransferFunction(num={self.num}, den={self.den}{ts_str})"
 
     def __str__(self):
-        n = f"{self.num}"
-        d = f"{self.den}"
-        m = "\n" + max(len(n), len(d)) * "-" + "\n"
-        return n + m + d
+        ns = str(self.num)
+        ds = str(self.den)
+        sep = "\n" + "-" * max(len(ns), len(ds)) + "\n"
+        return ns + sep + ds
 
-from plot import bodeplot, timeplot
-
-if __name__ == "__main__":
-    # Continuous-time 2nd-order low-pass (wc = 2 rad/s)
-    # H = TransferFunction()
-    # print(H)
-    # H = TransferFunction([4], [1, 2, 4])          # 4 / (s² + 2s + 4)
-    # print(2*H)
-    # print(H-1)
-    # print(H*7)
-    # print(H(1)*7/4)
-    # print(H.bilinear_transform(fs=20))
-    
-
-    # Transfer function H of a non-ideal buck filter with 1 type of capacitors
-    L = 20e-6  # H
-    Rl = .1  # Ohm
-    C = 100e-6  # F
-    Rc = 0.025  # Ohm
-    Rc = .1
-    R = 10 # Ohm
-
-    b0 = 1
-    b1 = C * Rc
-    a0 = 1 + Rl / R
-    a1 = L / R + Rc * C + Rl * C + Rl * Rc * C / R
-    a2 = (R + Rc) / R * L * C
-
-    num = np.polynomial.Polynomial([b0, b1])
-    den = np.polynomial.Polynomial([a0, a1, a2])
-    Ha = TransferFunction(num, den)
-    Hd = Ha.bilinear_transform(fs=200e3)
-    print(Ha)
-    print(Hd)
-
-    fmin = 10
-    fmax = 1e6
-    title = "Bode plot"
-    bodeplot(fmin, fmax, n=10000, title=title, Ha=Ha, Hd=Hd)
-
-    Ts = 0.5e-5
-    n = 10000
-    ta, fa = Ha.step_response(Ts, n)
-    td, fd = Hd.step_response(Ts, n)
-    timeplot(6e-3, "Impulse response", t1=ta, y1=fa, label1="Ha", t2=td, y2=fd, label2="Hd")
