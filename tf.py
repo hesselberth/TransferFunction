@@ -385,3 +385,58 @@ class TransferFunction:
         sep = "\n" + "-" * max(len(ns), len(ds)) + "\n"
         return ns + sep + ds
 
+def btmatrix(N, Ts=2):
+    """
+    Bilinear transform matrix using binomial theorem.
+    Coefficients arranged low-to-high (A[0] = constant term).
+    """
+    M = np.zeros((N+1, N+1))
+    for i in range(N+1):
+        for j in range(N+1):
+            s = 0.0
+            for k in range(max(i + j - N, 0), min(i, j) + 1):
+                num = f(j) * f(N - j)
+                den = f(k) * f(j - k) * f(i - k) * f(N - j - i + k)
+                s += (num / den) * ((-1) ** k)
+            M[N-j, i] = s * (2 / Ts) ** j
+    return M
+
+if __name__ == "__main__":
+    # btmatrix test
+    Ts = 2
+    ref = [np.array(                                                    \
+        [ [1] ]),                                             np.array( \
+        [ [1,  1],                                                      \
+          [1, -1] ]),                                         np.array( \
+        [ [1,  2,  1],                                                  \
+          [1,  0, -1],                                                  \
+          [1, -2,  1] ]),                                     np.array( \
+        [ [1,  3,  3,  1],                                              \
+          [1,  1, -1, -1],                                              \
+          [1, -1, -1,  1],                                              \
+          [1, -3,  3, -1] ]),                                 np.array( \
+        [ [1,  4,  6,  4,  1],                                          \
+          [1,  2,  0, -2, -1],                                          \
+          [1,  0, -2,  0,  1],                                          \
+          [1, -2,  0,  2, -1],                                          \
+          [1, -4,  6, -4,  1] ]),                             np.array( \
+        [ [1,  5, 10, 10,  5,  1],                                      \
+          [1,  3,  2, -2, -3, -1],                                      \
+          [1,  1, -2, -2,  1,  1],                                      \
+          [1, -1, -2,  2,  1, -1],                                      \
+          [1, -3,  2,  2, -3,  1],                                      \
+          [1, -5, 10,-10,  5, -1] ]),                         np.array( \
+        [ [1,  6, 15, 20, 15,  6,  1],                                  \
+          [1,  4,  5,  0, -5, -4, -1],                                  \
+          [1,  2, -1, -4, -1,  2,  1],                                  \
+          [1,  0, -3,  0,  3,  0, -1],                                  \
+          [1, -2, -1,  4, -1, -2,  1],                                  \
+          [1, -4,  5,  0, -5,  4, -1],                                  \
+          [1, -6, 15,-20, 15, -6,  1] ])]
+
+    for n in range(len(ref)):
+        r = ref[n][::-1]
+        assert((btmatrix(n, Ts) == r).all())
+        print(btmatrix(n, Ts))
+        print(r)
+
