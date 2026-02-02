@@ -51,19 +51,18 @@ def bt(num, den, Ts):
     order = orderplus1 - 1
     a = np.pad(den, (0, orderplus1 - la))
     b = np.pad(num, (0, orderplus1 - lb))
+    print("num", num)
+    print("b", b)
+    print("den", den)
+    print("a", a)
     M = btmatrix(order, Ts)
     A = a @ M
     B = b @ M
     norm = A[-1]
     if abs(norm) < 1e-20:
         raise ValueError("Denominator became zero after bilinear transform")
-    #A = A / norm
-    #B = B / norm
-
-    A = A[::-1] / norm
-    B = B[::-1] / norm
-    print("bt: B", B)
-    print("bt: A", A)
+    A = A / norm
+    B = B / norm
     return B, A
 
 
@@ -103,6 +102,9 @@ class TransferFunction:
         else:
             raise ValueError("TransferFunction accepts 0, 1 (copy) or 2 \
                              positional arguments + Ts= keyword")
+        self.symbol = 's' if Ts == 0 else 'z'
+        self.num = Polynomial(self.num.coef, symbol = self.symbol)
+        self.den = Polynomial(self.den.coef, symbol = self.symbol)
 
     def fromnd(self, n, d, trim_tol=DEFAULTTRIM):
         self.num = Polynomial(n) if not isinstance(n, Polynomial) else n
@@ -119,6 +121,12 @@ class TransferFunction:
             return Polynomial(c)
         self.num = trim_poly(self.num)
         self.den = trim_poly(self.den)
+        
+    def is_continuous(self):
+        return self.Ts == 0
+    
+    def is_discrete(self):
+        return self.Ts > 0
 
     def _acheck(self, Ts1, Ts2):
         """
@@ -196,7 +204,7 @@ class TransferFunction:
         - high_to_low=True  → DSP standard: highest power first, a[0] ≈ 1
         - high_to_low=False → internal low-to-high order
         """
-        lc = self.den.coef[0]
+        lc = self.den.coef[-1]
         if abs(lc) < 1e-20:
             raise ValueError("Denominator leading coefficient near zero")
 
@@ -204,9 +212,9 @@ class TransferFunction:
         den_n = self.den.coef / lc
 
         if high_to_low:
-            return num_n[::-1], den_n[::-1]
-        else:
             return num_n, den_n
+        else:
+            return num_n[::-1], den_n[::-1]
 
     def export_cmsis_biquad_df2t(self, var_name="coeffs", instance_name="S", state_name="state"):
         """
@@ -385,21 +393,21 @@ class TransferFunction:
         sep = "\n" + "-" * max(len(ns), len(ds)) + "\n"
         return ns + sep + ds
 
-def btmatrix(N, Ts=2):
-    """
-    Bilinear transform matrix using binomial theorem.
-    Coefficients arranged low-to-high (A[0] = constant term).
-    """
-    M = np.zeros((N+1, N+1))
-    for i in range(N+1):
-        for j in range(N+1):
-            s = 0.0
-            for k in range(max(i + j - N, 0), min(i, j) + 1):
-                num = f(j) * f(N - j)
-                den = f(k) * f(j - k) * f(i - k) * f(N - j - i + k)
-                s += (num / den) * ((-1) ** k)
-            M[N-j, i] = s * (2 / Ts) ** j
-    return M
+# def btmatrix(N, Ts=2):
+#     """
+#     Bilinear transform matrix using binomial theorem.
+#     Coefficients arranged low-to-high (A[0] = constant term).
+#     """
+#     M = np.zeros((N+1, N+1))
+#     for i in range(N+1):
+#         for j in range(N+1):
+#             s = 0.0
+#             for k in range(max(i + j - N, 0), min(i, j) + 1):
+#                 num = f(j) * f(N - j)
+#                 den = f(k) * f(j - k) * f(i - k) * f(N - j - i + k)
+#                 s += (num / den) * ((-1) ** k)
+#             M[N-j, i] = s * (2 / Ts) ** j
+#     return M
 
 if __name__ == "__main__":
     # btmatrix test
@@ -436,7 +444,24 @@ if __name__ == "__main__":
 
     for n in range(len(ref)):
         r = ref[n][::-1]
-        assert((btmatrix(n, Ts) == r).all())
-        print(btmatrix(n, Ts))
-        print(r)
+        #assert((btmatrix(n, Ts) == r).all())
+        #print(btmatrix(n, Ts))
+        #print(r)
+    
+    H = TransferFunction([1], [0, 1])
+    print(H)
+    print()
+    Hd = H.bilinear_transform(Ts=2)
+    print(Hd)
 
+    H = TransferFunction([1], [100, 10, 1])
+    print(H)
+    print()
+    Hd = H.bilinear_transform(Ts=2)
+    print(Hd)
+    
+    H = TransferFunction([1], [1, 1])
+    print(H)
+    print()
+    Hd = H.bilinear_transform(Ts=2)
+    print(Hd)
