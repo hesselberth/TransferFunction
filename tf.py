@@ -6,15 +6,12 @@ Created on Sun Feb  1 11:58:05 2026
 @author: Marcel Hesselberth
 
 Version 0.3
-"""
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
 Transfer Function library for control system modeling and simulation.
 Supports bilinear (Tustin) discretization and export to CMSIS-DSP
 style biquads.
 """
+
 
 import numpy as np
 from numpy.polynomial import Polynomial
@@ -46,7 +43,6 @@ def btmatrix(N, Ts=2):
             M[j, i] = s * (2 / Ts) ** j
     return M
 
-
 def bt(num, den, Ts):
     """
     Apply bilinear transform using precomputed matrix. np.Polynomial uses
@@ -75,10 +71,6 @@ def bt(num, den, Ts):
     order = orderplus1 - 1
     nump = np.pad(num, (0, orderplus1 - lnum))
     denp = np.pad(den, (0, orderplus1 - lden))
-    #print("num", num)
-    #print("b", b)
-    #print("den", den)
-    #print("a", a)
     M = btmatrix(order, Ts)
     B = nump @ M
     A = denp @ M
@@ -427,44 +419,6 @@ class TransferFunction:
 
 
 if __name__ == "__main__":
-    # btmatrix test
-    Ts = 2
-    ref = [np.array(                                                    \
-        [ [1] ]),                                             np.array( \
-        [ [1,  1],                                                      \
-          [1, -1] ]),                                         np.array( \
-        [ [1,  2,  1],                                                  \
-          [1,  0, -1],                                                  \
-          [1, -2,  1] ]),                                     np.array( \
-        [ [1,  3,  3,  1],                                              \
-          [1,  1, -1, -1],                                              \
-          [1, -1, -1,  1],                                              \
-          [1, -3,  3, -1] ]),                                 np.array( \
-        [ [1,  4,  6,  4,  1],                                          \
-          [1,  2,  0, -2, -1],                                          \
-          [1,  0, -2,  0,  1],                                          \
-          [1, -2,  0,  2, -1],                                          \
-          [1, -4,  6, -4,  1] ]),                             np.array( \
-        [ [1,  5, 10, 10,  5,  1],                                      \
-          [1,  3,  2, -2, -3, -1],                                      \
-          [1,  1, -2, -2,  1,  1],                                      \
-          [1, -1, -2,  2,  1, -1],                                      \
-          [1, -3,  2,  2, -3,  1],                                      \
-          [1, -5, 10,-10,  5, -1] ]),                         np.array( \
-        [ [1,  6, 15, 20, 15,  6,  1],                                  \
-          [1,  4,  5,  0, -5, -4, -1],                                  \
-          [1,  2, -1, -4, -1,  2,  1],                                  \
-          [1,  0, -3,  0,  3,  0, -1],                                  \
-          [1, -2, -1,  4, -1, -2,  1],                                  \
-          [1, -4,  5,  0, -5,  4, -1],                                  \
-          [1, -6, 15,-20, 15, -6,  1] ])]
-
-    for n in range(len(ref)):
-        r = ref[n][::-1]
-        #assert((btmatrix(n, Ts) == r).all())
-        #print(btmatrix(n, Ts))
-        #print(r)
-    
     H = TransferFunction([1], [0, 1])
     print(H)
     print()

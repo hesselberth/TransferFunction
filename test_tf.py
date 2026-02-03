@@ -4,12 +4,9 @@
 Created on Sun Feb  1 12:42:54 2026
 
 @author: Marcel Hesselberth
-"""
 
-# tests/test_transferfunction.py
-"""
 Pytest suite for TransferFunction class:
-- Bilinear transform correctness
+- Bilinear transform
 - Arithmetic operations (+, -, *, /, negation)
 """
 
@@ -18,10 +15,8 @@ import numpy as np
 from numpy.testing import assert_allclose
 from math import pi
 
-from tf import TransferFunction, DEFAULTTRIM
+from tf import btmatrix, bt, TransferFunction, DEFAULTTRIM
 
-
-# ──────────────────────────────────────────────── Fixtures
 
 @pytest.fixture
 def simple_lowpass():
@@ -65,7 +60,43 @@ def tf_discrete_diff_Ts():
     return TransferFunction([1.0, 0.2], [1.0, -0.4], Ts=0.05)
 
 
-# ──────────────────────────────────────────────── Bilinear transform tests
+# Bilinear transform tests
+
+@pytest.mark.parametrize("N", [1, 2, 3, 4, 5, 6])
+def test_btmatrix(N):
+    """ Reference data for the bilinear transform matrix"""
+    btref = [np.array(                                                  \
+        [ [1] ]),                                             np.array( \
+        [ [1,  1],                                                      \
+          [1, -1] ]),                                         np.array( \
+        [ [1,  2,  1],                                                  \
+          [1,  0, -1],                                                  \
+          [1, -2,  1] ]),                                     np.array( \
+        [ [1,  3,  3,  1],                                              \
+          [1,  1, -1, -1],                                              \
+          [1, -1, -1,  1],                                              \
+          [1, -3,  3, -1] ]),                                 np.array( \
+        [ [1,  4,  6,  4,  1],                                          \
+          [1,  2,  0, -2, -1],                                          \
+          [1,  0, -2,  0,  1],                                          \
+          [1, -2,  0,  2, -1],                                          \
+          [1, -4,  6, -4,  1] ]),                             np.array( \
+        [ [1,  5, 10, 10,  5,  1],                                      \
+          [1,  3,  2, -2, -3, -1],                                      \
+          [1,  1, -2, -2,  1,  1],                                      \
+          [1, -1, -2,  2,  1, -1],                                      \
+          [1, -3,  2,  2, -3,  1],                                      \
+          [1, -5, 10,-10,  5, -1] ]),                         np.array( \
+        [ [1,  6, 15, 20, 15,  6,  1],                                  \
+          [1,  4,  5,  0, -5, -4, -1],                                  \
+          [1,  2, -1, -4, -1,  2,  1],                                  \
+          [1,  0, -3,  0,  3,  0, -1],                                  \
+          [1, -2, -1,  4, -1, -2,  1],                                  \
+          [1, -4,  5,  0, -5,  4, -1],                                  \
+          [1, -6, 15,-20, 15, -6,  1] ])]
+    Mref = np.fliplr(btref[N])
+    M = btmatrix(N, 2)
+    assert((M == Mref).all())
 
 def test_first_order_lowpass_standard(simple_lowpass):
     tf_disc = simple_lowpass.bilinear_transform(Ts=1.0)
