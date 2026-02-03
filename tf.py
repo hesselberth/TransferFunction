@@ -5,14 +5,15 @@ Created on Sun Feb  1 11:58:05 2026
 
 @author: Marcel Hesselberth
 
-Version 0.3a
+Version 0.3
 """
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Transfer Function library for control system modeling and simulation
-Supports bilinear (Tustin) discretization and export to CMSIS-DSP style biquads
+Transfer Function library for control system modeling and simulation.
+Supports bilinear (Tustin) discretization and export to CMSIS-DSP
+style biquads.
 """
 
 import numpy as np
@@ -28,45 +29,70 @@ PI2 = 2 * PI
 @cache
 def btmatrix(N, Ts=2):
     """
-    Bilinear transform matrix using binomial theorem.
-    Coefficients arranged low-to-high (A[0] = constant term).
+    Bilinear transform matrix using binomial theorem. For a transfer function
+    H(s) = nump(s) / denp(s) where num and den are np.Polynomial's and
+    num = nump.coef and den = denp.coef are their vectors of coefficients, the
+    bilinear transform H(z) is given by the coefficient vectors b = num @ M
+    and a = den @ M. For Ts = 2, H(z) = np.Polynomial(b) / np.Polynomial(a).
     """
     M = np.zeros((N+1, N+1))
     for i in range(N+1):
         for j in range(N+1):
             s = 0.0
-            for k in range(max(i + j - N, 0), min(i, j) + 1):
+            for k in range(max(j - i, 0), min(N - i, j) + 1):
                 num = f(j) * f(N - j)
-                den = f(k) * f(j - k) * f(i - k) * f(N - j - i + k)
+                den = f(k) * f(j - k) * f(N - i - k) * f(i - j + k)
                 s += (num / den) * ((-1) ** k)
-            M[j, N-i] = s * (2 / Ts) ** j
+            M[j, i] = s * (2 / Ts) ** j
     return M
 
 
 def bt(num, den, Ts):
-    """Apply bilinear transform using precomputed matrix."""
-    la = len(den)
-    lb = len(num)
-    orderplus1 = max(la, lb)
+    """
+    Apply bilinear transform using precomputed matrix. np.Polynomial uses
+    coefficient vectors (np.arrays) in low to high order where coef[0]
+    corresponds to order 0 and [1, 2, 4] is the polynomial 1 + 2*s + 4*s**2.
+    This library follows the low-to-high Polynomial convention, meaning that
+    this transform will result in a polynomial in the z domain with
+    low to high coefficients. According to the Z-transform theory the linear
+    difference equation feedworward and feedback coefficients can simply be
+    read from the Z-domain transfer function coefficients when it is
+    written as a Laurent polynomial with negative powers. This means that,
+    although the coefficient order of this library is low-to-high for the
+    positive power polynomial, it is high-to-low for the b and a coefficients.
+    
+    This function takes coefficients of the s domain numerator and denominator
+    polynomials as input and returns the numerator and denominator
+    coefficients of the Z-domain (positive power) polynomials, which will
+    be padded to the highest order that occurs.
+    """
+    lnum = len(num)
+    lden = len(den)
+    orderplus1 = max(lnum, lden)
     order = orderplus1 - 1
-    a = np.pad(den, (0, orderplus1 - la))
-    b = np.pad(num, (0, orderplus1 - lb))
-    print("num", num)
-    print("b", b)
-    print("den", den)
-    print("a", a)
+    nump = np.pad(num, (0, orderplus1 - lnum))
+    denp = np.pad(den, (0, orderplus1 - lden))
+    #print("num", num)
+    #print("b", b)
+    #print("den", den)
+    #print("a", a)
     M = btmatrix(order, Ts)
-    A = a @ M
-    B = b @ M
-    norm = A[-1]
+    B = nump @ M
+    A = denp @ M
+    norm = A[-1]  # normalize by the highest order denominator coefficient
     if abs(norm) < 1e-20:
         raise ValueError("Denominator became zero after bilinear transform")
     A = A / norm
     B = B / norm
-    return B, A
+    return B, A  # numerator coefficients, denominator coefficients
 
 
 class TransferFunction:
+    """
+    Transfer Function class for control system modeling and simulation.
+    Supports bilinear (Tustin) discretization and export to
+    CMSIS-DSP style biquads for hardware implementation.
+    """
     def __init__(self, *args, Ts=0.0, trim_tol=DEFAULTTRIM, **kwargs):
         """
         Transfer Function constructor.
@@ -79,8 +105,9 @@ class TransferFunction:
                 - 2 args: num, den (coefficients or Polynomial)
         Ts : float, optional (keyword)
              Sampling time ( > 0 for discrete, 0 for continuous)
+             The default is 0 (continuous)
         trim_tol : float, optional (keyword)
-             Tolerance for trimming small leading coefficients
+             Tolerance for trimming small trailing coefficients
         """
         self.Ts = float(Ts)
 
@@ -101,7 +128,7 @@ class TransferFunction:
             self.fromnd(args[0], args[1], trim_tol=trim_tol)
         else:
             raise ValueError("TransferFunction accepts 0, 1 (copy) or 2 \
-                             positional arguments + Ts= keyword")
+                             positional arguments + Ts = keyword")
         self.symbol = 's' if Ts == 0 else 'z'
         self.num = Polynomial(self.num.coef, symbol = self.symbol)
         self.den = Polynomial(self.den.coef, symbol = self.symbol)
@@ -123,9 +150,17 @@ class TransferFunction:
         self.den = trim_poly(self.den)
         
     def is_continuous(self):
+        """
+        Returns True if the transfer function is a continuous transfer function
+        in the s domain.
+        """
         return self.Ts == 0
     
     def is_discrete(self):
+        """
+        Returns True if the transfer function is a discrete transfer function
+        in the z domain.
+        """
         return self.Ts > 0
 
     def _acheck(self, Ts1, Ts2):
@@ -202,7 +237,7 @@ class TransferFunction:
         """
         Returns b (feedforward), a (feedback) coefficients.
         - high_to_low=True  → DSP standard: highest power first, a[0] ≈ 1
-        - high_to_low=False → internal low-to-high order
+        - high_to_low=False → Low-to-high order
         """
         lc = self.den.coef[-1]
         if abs(lc) < 1e-20:
@@ -326,7 +361,7 @@ class TransferFunction:
     # ──────────────────────────────────────────────── Utility
 
     def delay(self, n_samples, tol=1e-12):
-        if not hasattr(self, 'Ts') or self.Ts <= 0:
+        if self.is_continuous():
             raise ValueError("delay requires discrete TF")
         if not isinstance(n_samples, int) or n_samples < 0:
             raise ValueError("n_samples must be non-negative integer")
@@ -393,21 +428,6 @@ class TransferFunction:
         sep = "\n" + "-" * max(len(ns), len(ds)) + "\n"
         return ns + sep + ds
 
-# def btmatrix(N, Ts=2):
-#     """
-#     Bilinear transform matrix using binomial theorem.
-#     Coefficients arranged low-to-high (A[0] = constant term).
-#     """
-#     M = np.zeros((N+1, N+1))
-#     for i in range(N+1):
-#         for j in range(N+1):
-#             s = 0.0
-#             for k in range(max(i + j - N, 0), min(i, j) + 1):
-#                 num = f(j) * f(N - j)
-#                 den = f(k) * f(j - k) * f(i - k) * f(N - j - i + k)
-#                 s += (num / den) * ((-1) ** k)
-#             M[N-j, i] = s * (2 / Ts) ** j
-#     return M
 
 if __name__ == "__main__":
     # btmatrix test
