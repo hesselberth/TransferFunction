@@ -30,9 +30,9 @@ PI2 = 2 * PI
 def btmatrix(N, Ts=2):
     """
     Bilinear transform matrix using binomial theorem. For a transfer function
-    H(s) = nump(s) / denp(s) where num and den are np.Polynomial's and
-    num = nump.coef and den = denp.coef are their vectors of coefficients, the
-    bilinear transform H(z) is given by the coefficient vectors b = num @ M
+    H(s) = nump(s) / denp(s) where nump and denp are np.Polynomial's, num and
+    den are their vectors of coefficients (num, den = nump.coef, denp.coef),
+    the bilinear transform H(z) is given by the coefficient vectors b = num @ M
     and a = den @ M. For Ts = 2, H(z) = np.Polynomial(b) / np.Polynomial(a).
     """
     M = np.zeros((N+1, N+1))
@@ -59,12 +59,15 @@ def bt(num, den, Ts):
     read from the Z-domain transfer function coefficients when it is
     written as a Laurent polynomial with negative powers. This means that,
     although the coefficient order of this library is low-to-high for the
-    positive power polynomial, it is high-to-low for the b and a coefficients.
+    positive power polynomial coefficients, it is high-to-low for the
+    b and a coefficients.
     
-    This function takes coefficients of the s domain numerator and denominator
-    polynomials as input and returns the numerator and denominator
+    This function takes coefficient arrays of the s domain numerator and
+    denominator polynomials as input and returns the numerator and denominator
     coefficients of the Z-domain (positive power) polynomials, which will
     be padded to the highest order that occurs.
+    
+    Ts is the sample time > 0.
     """
     lnum = len(num)
     lden = len(den)
@@ -152,14 +155,14 @@ class TransferFunction:
     def is_continuous(self):
         """
         Returns True if the transfer function is a continuous transfer function
-        in the s domain.
+        in the s domain, otherwise False.
         """
         return self.Ts == 0
     
     def is_discrete(self):
         """
         Returns True if the transfer function is a discrete transfer function
-        in the z domain.
+        in the z domain, otherwise False.
         """
         return self.Ts > 0
 
@@ -231,8 +234,6 @@ class TransferFunction:
         b, a = bt(self.num.coef, self.den.coef, Ts_val)
         return TransferFunction(b, a, Ts=Ts_val)
 
-
-    # TODO check sign for higher order systems
     def to_difference_equation(self, high_to_low=True):
         """
         Returns b (feedforward), a (feedback) coefficients.
@@ -315,8 +316,6 @@ class TransferFunction:
         print(f"arm_biquad_cascade_df2T_init_f32(&{instance_name}, {n}, {var_name}, {state_name});")
         print("// Usage: y = arm_biquad_cascade_df2T_f32(&S, &x_in, 1);")
 
-    # ──────────────────────────────────────────────── Time-domain simulation (DF-I)
-
     def tdfilter(self, x):
         if not hasattr(self, 'Ts') or self.Ts <= 0:
             raise ValueError("requires discrete-time transfer function")
@@ -357,8 +356,6 @@ class TransferFunction:
             tt, h = self.impulse_response(Ts, n)
             y = np.convolve(h, np.ones_like(tt), mode='full')[:n]
             return tt, y
-
-    # ──────────────────────────────────────────────── Utility
 
     def delay(self, n_samples, tol=1e-12):
         if self.is_continuous():
