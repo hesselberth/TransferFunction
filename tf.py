@@ -160,7 +160,10 @@ class TransferFunction:
 
     def _acheck(self, Ts1, Ts2):
         """
-        Check Ts alignment for TF arithmetic.
+        Check Ts alignment for arithmetic.
+        Operations of discrete time transfer functions on continuous time
+        transfer functions or other discrete time transfer functions with a
+        different sampling time are not supported.
         """
         if not Ts1 == Ts2:
             if 0 in [Ts1, Ts2]:
