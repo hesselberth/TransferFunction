@@ -249,67 +249,116 @@ class TransferFunction:
 
     def export_cmsis_biquad_df2t(self, var_name="coeffs", instance_name="S", state_name="state"):
         """
-        Print C code snippet for arm_biquad_cascade_df2T_f32 (DF-II Transposed).
-        Coefficients: b0, b1, b2, -a1, -a2, ... (CMSIS convention)
+        Export transfer function as CMSIS-DSP biquad cascade (DF-II Transposed).
+        Improved version with robust pairing and better gain handling.
         """
-        if not hasattr(self, 'Ts') or self.Ts <= 0:
+        if not self.is_discrete():
             raise ValueError("export_cmsis_biquad_df2t requires discrete TF (Ts > 0)")
 
-        b_high, a_high = self.to_difference_equation(high_to_low=True)
+        # Correct DC gain (H(0))
+        dc_gain = float(self(0.0))
+        if abs(dc_gain) < 1e-12:
+            dc_gain = 1.0  # avoid zero gain
 
         poles = self.poles()
         zeros = self.zeros()
-        gain = float(self(0.0)) if len(zeros) == 0 else self.num(1.0) / self.den(1.0)
 
-        def roots_to_quadratics(roots):
-            roots = sorted(roots, key=lambda r: (abs(r), np.angle(r)))
+        def roots_to_quadratics(roots, tol=1e-8):
+            """Pair complex-conjugate roots into quadratics, leave reals as 1st-order."""
+            if len(roots) == 0:
+                return []
+            
+            # Sort by descending magnitude (standard for SOS)
+            roots = sorted(roots, key=lambda r: -abs(r))
+            
             quads = []
-            i = 0
-            while i < len(roots):
-                if (i + 1 < len(roots) and
-                        np.isclose(roots[i].real, roots[i+1].real) and
-                        np.isclose(roots[i].imag, -roots[i+1].imag, atol=1e-6)):
-                    p = Polynomial.fromroots([roots[i], roots[i+1]])
-                    quads.append(p.coef[::-1])          # high-to-low
-                    i += 2
-                else:
-                    p = Polynomial.fromroots([roots[i]])
-                    coef = p.coef[::-1]
+            used = set()
+            
+            for i, r in enumerate(roots):
+                if id(r) in used:
+                    continue
+                    
+                imag = np.imag(r)
+                if abs(imag) < tol:  # real root
+                    p = Polynomial.fromroots([r])
+                    coef = p.coef[::-1]  # high-to-low: [a0, a1] or [b0, b1]
                     coef = np.pad(coef, (0, 3 - len(coef)), constant_values=0.0)
                     quads.append(coef)
-                    i += 1
+                    used.add(id(r))
+                else:
+                    # Find conjugate pair
+                    conj = np.conj(r)
+                    found = False
+                    for j in range(i + 1, len(roots)):
+                        if id(roots[j]) in used:
+                            continue
+                        if np.abs(roots[j] - conj) < tol:
+                            p = Polynomial.fromroots([r, roots[j]])
+                            coef = p.coef[::-1]  # high-to-low
+                            coef = np.pad(coef, (0, 3 - len(coef)), constant_values=0.0)
+                            quads.append(coef)
+                            used.add(id(r))
+                            used.add(id(roots[j]))
+                            found = True
+                            break
+                    if not found:
+                        # Unpaired complex root (rare) → treat as real
+                        p = Polynomial.fromroots([r])
+                        coef = p.coef[::-1]
+                        coef = np.pad(coef, (0, 3 - len(coef)), constant_values=0.0)
+                        quads.append(coef)
+                        used.add(id(r))
             return quads
 
         pole_quads = roots_to_quadratics(poles)
         zero_quads = roots_to_quadratics(zeros)
 
+        # Balance number of sections
         n = max(len(pole_quads), len(zero_quads))
         while len(pole_quads) < n:
             pole_quads.append(np.array([1.0, 0.0, 0.0]))
         while len(zero_quads) < n:
             zero_quads.append(np.array([1.0, 0.0, 0.0]))
 
+        # Build sections
         sections = []
-        g = gain ** (1.0 / max(1, n)) if n > 0 else gain
+        remaining_gain = dc_gain
 
-        for zq, pq in zip(zero_quads, pole_quads):
+        for i, (zq, pq) in enumerate(zip(zero_quads, pole_quads)):
+            # Normalize denominator (a0 = 1)
+            if abs(pq[0]) < 1e-12:
+                pq = np.array([1.0, 0.0, 0.0])
+            else:
+                pq = pq / pq[0]
+
+            # Apply gain: full gain on first section, 1.0 on others
+            g = remaining_gain if i == 0 else 1.0
             b_sec = g * zq
-            a_sec = pq
+
+            # Pad b to 3 coefficients (high-to-low)
             b_sec = np.pad(b_sec, (3 - len(b_sec), 0), constant_values=0.0)
-            a_sec = np.pad(a_sec, (3 - len(a_sec), 0), constant_values=0.0)
-            sec = [b_sec[0], b_sec[1], b_sec[2], -a_sec[1], -a_sec[2]]
+
+            # CMSIS-DSP DF-II Transposed format: b0, b1, b2, -a1, -a2
+            sec = [
+                b_sec[0], b_sec[1], b_sec[2],
+                -pq[1], -pq[2]
+            ]
             sections.extend(sec)
 
-        print(f"// Generated for {self!r}  (order {len(a_high)-1})")
-        print(f"// {n} biquad stage(s)")
+        # Print C code
+        order = len(self.den.coef) - 1
+        print(f"// Generated for {self!r} (order {order})")
+        print(f"// {n} biquad stage(s), DC gain = {dc_gain:.8e}")
         print(f"float32_t {var_name}[] = {{")
         print("    " + ",\n    ".join(f"{x:12.8e}f" for x in sections))
         print("};")
         print("")
-        print(f"float32_t {state_name}[{2 * n}] = {{0.0f}};")
+        print(f"float32_t {state_name}[{2 * n}] = {{0.0f}};" )
         print(f"arm_biquad_cascade_df2T_instance_f32 {instance_name};")
         print(f"arm_biquad_cascade_df2T_init_f32(&{instance_name}, {n}, {var_name}, {state_name});")
-        print("// Usage: y = arm_biquad_cascade_df2T_f32(&S, &x_in, 1);")
+        print("// Usage example:")
+        print("// float32_t y[1];")
+        print("// arm_biquad_cascade_df2T_f32(&S, &x_in, y, 1);")
 
     def tdfilter(self, x):
         if not hasattr(self, 'Ts') or self.Ts <= 0:
